@@ -669,6 +669,9 @@ FISH.update({_f["id"]: _f for _f in json.loads(r"""
   }
 ]
 """)})
+# 早期经济：常规鱼普遍卖价低于鱼饵成本（钓常见鱼亏本），统一上调 base_value（不动少见及以上）。
+for _f in FISH.values():
+    if _f.get("rarity") == "common": _f["base_value"] += 5
 BAITS = {
     "basic_worm": {"id": "basic_worm", "name": "普通蚯蚓", "cost": 10, "description": "最朴素的蚯蚓，没有任何特殊效果，胜在便宜。", "effects": {}},
     "glow_bait": {"id": "glow_bait", "name": "夜光饵", "cost": 35, "description": "在黑暗中散发幽幽蓝光，对夜行性鱼类格外有吸引力。", "effects": {"rarity_weight_mult": {"rare": 1.5, "epic": 1.3}, "tag_weight_mult": {"nocturnal": 2.0}, "junk_chance_mult": 0.8}},
@@ -1302,11 +1305,16 @@ def _c_status():
     return "【状态】%s\n鱼饵：%s%s\n未卖渔获：%d 条 ｜ 总抛竿 %d%s" % (_footer(), baits, air, len(S["catch_inventory"]), S["stats"]["total_casts"], extra)
 def _c_shop():
     lines = ["%s　%s　%d点　%s" % (b["id"], b["name"], b["cost"], ("（有偏好加成，见 look）" if (b["effects"].get("tag_weight_mult") or b["effects"].get("rarity_weight_mult")) else "无特殊效果")) for b in BAITS.values()]
-    lines.append("%s　%s　%d点　%s" % (OXYGEN["id"], OXYGEN["name"], OXYGEN["cost"], "潜水用（一瓶潜一次，dive 下水）｜套餐：买 5 瓶 8 折、10 瓶 7 折"))
-    return "【商店】（buy <id> [数量]）\n" + "\n".join(lines) + \
-        "\n老板搓了搓手：「好饵能让这片水里本来就有的鱼更肯上钩、更容易出稀有货——可它变不出新鱼种。想钓没见过的鱼，得换个水域、换个季节去寻。」\n「想要水下那些上不了岸的稀客？买几瓶氧气，dive 潜下去。」"
+    dive_open = bool(S.get("dive_unlocked"))   # 解锁第一个潜水点后，氧气瓶才上架（潜水是后期玩法）
+    if dive_open:
+        lines.append("%s　%s　%d点　%s" % (OXYGEN["id"], OXYGEN["name"], OXYGEN["cost"], "潜水用（一瓶潜一次，dive 下水）｜套餐：买 5 瓶 8 折、10 瓶 7 折"))
+    tail = "\n老板搓了搓手：「好饵能让这片水里本来就有的鱼更肯上钩、更容易出稀有货——可它变不出新鱼种。想钓没见过的鱼，得换个水域、换个季节去寻。」"
+    tail += "\n「想要水下那些上不了岸的稀客？买几瓶氧气，dive 潜下去。」" if dive_open else "\n「氧气瓶？等你拼出第一张藏宝图、找到能下水的地方，再来问我。」"
+    return "【商店】（buy <id> [数量]）\n" + "\n".join(lines) + tail
 def _c_buy(bait_id, qty):
     if bait_id in ("oxygen", "oxygen_tank", "氧气瓶"):   # 氧气瓶：潜水消耗品，单独库存
+        if not S.get("dive_unlocked"):
+            return "现在还买不了氧气瓶——先在水面钓鱼集齐藏宝图碎片、解锁第一个潜水点，店里才会上架。"
         qty = max(1, int(qty))
         disc = 0.7 if qty >= 10 else (0.8 if qty >= 5 else 1.0)   # 套餐：≥5 瓶 8 折、≥10 瓶 7 折
         base = OXYGEN["cost"] * qty; cost = int(round(base * disc))
@@ -1466,10 +1474,13 @@ def _format_catch(f, size, value, inst, first):
         if first: out += "\n   ★图鉴新发现：%s" % f["description"]
     return out + cf
 def _ambience(loc, rng):
+    # 氛围句只在「换场景」后出一次：同一地点+季节里反复抛竿不再刷，换地点/季节才再出一句
+    key = "%s|%s" % (S["location_id"], S["season_id"])
+    if S.get("ambience_scene") == key: return ""
+    S["ambience_scene"] = key
     amb = loc.get("ambience")
-    if amb and rng.random() < 0.35:
-        return "\n（%s）" % amb[rng.rint(0, len(amb) - 1)]
-    return ""
+    if not amb: return ""
+    return "\n（%s）" % amb[rng.rint(0, len(amb) - 1)]
 # ⑤ 本地点当季「非传说」鱼是否已集齐（传说/神话可遇不可求，不算进墙）
 def _local_practical_cleared():
     elig = [f for f in FISH.values() if _eligible(f, S["location_id"], S["season_id"]) and f["rarity"] not in ("legendary", "mythic")]
